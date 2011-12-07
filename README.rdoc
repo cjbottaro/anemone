@@ -26,7 +26,7 @@ That will setup two queues: +page_queue-test123+ and +link_queue-test123+ as wel
 
 Next you launch multiple processes that should run the exact same code block but with <tt>:init => false</tt> instead.
 
-The crawl is finished when all processes exit.  Each process will exit when the link_queue and page_queue have been empty for +finish_timeout+ seconds (which is an Anemone option unique to this fork).
+The crawl is finished when all processes exit.  Each process will exit when the link_queue and page_queue have been empty for +finish_timeout+ seconds (which is an Anemone option unique to this fork).  There is a caveat to this appoach.  If your queues are being consumed faster than they are produced, a process could get starved and exit prematurely.  In practice, the queues will probably be filled much faster than they are consumed.
 
 At this time, there is no facility for cleaning up the queues and page store once the crawl is finished.  You should do this manually.
 

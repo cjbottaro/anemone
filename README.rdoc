@@ -6,6 +6,30 @@ write your own specialized spider tasks quickly and easily.
 
 See http://anemone.rubyforge.org for more information.
 
+== Distributed Fork
+
+This is a fork of the official repo that provides a distributed (multiprocess) version of Anemone.
+
+It requires an external queue, and at this time only supports RabbitMQ.
+
+Starting a distributed crawl is a 2 part process.  First, you have initialize the crawl which setups the queues and page store.  Then you start up Anemone processes, telling them to use the queues and page store that was previously initialized.
+
+  anemone = Anemone.crawl(ARGV[0], :threads => 1, :init => true, :tag => "test123") do |anemone|
+    anemone.storage = Anemone::Storage.MongoDB nil, "pages"
+    anemone.queue :rabbit_mq, :host => host, :port => port
+    anemone.on_every_page do |page|
+      puts page.url
+    end
+  end
+
+That will setup two queues: +page_queue-test123+ and +link_queue-test123+ as well as create a +pages-test123+ collection in MongoDB.
+
+Next you launch multiple processes that should run the exact same code block but with <tt>:init => false</tt> instead.
+
+The crawl is finished when all processes exit.  Each process will exit when the link_queue and page_queue have been empty for +finish_timeout+ seconds (which is an Anemone option unique to this fork).
+
+At this time, there is no facility for cleaning up the queues and page store once the crawl is finished.  You should do this manually.
+
 == Features
 * Multi-threaded design for high performance
 * Tracks 301 HTTP redirects

@@ -14,6 +14,9 @@ module Anemone
       def initialize(mongo_db, collection_name)
         @db = mongo_db
         @collection = @db[collection_name]
+      end
+
+      def clear
         @collection.remove
         @collection.create_index 'url'
       end

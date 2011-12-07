@@ -6,6 +6,7 @@ require 'anemone/exceptions'
 require 'anemone/page_store'
 require 'anemone/storage'
 require 'anemone/storage/base'
+require 'anemone/queue'
 
 module Anemone
 
@@ -24,6 +25,8 @@ module Anemone
     attr_reader :pages
     # Hash of options for the crawl
     attr_reader :opts
+
+    attr_reader :page_queue, :link_queue
 
     DEFAULT_OPTS = {
       # run 4 Tentacle threads to fetch pages
@@ -55,7 +58,9 @@ module Anemone
       # proxy server port number
       :proxy_port => false,
       # HTTP read timeout in seconds
-      :read_timeout => nil
+      :read_timeout => nil,
+      # How long to wait before deeming a distributed crawl finished
+      :finish_timeout => 10
     }
 
     # Create setter methods for all options to be called from the crawl block
@@ -149,19 +154,28 @@ module Anemone
       process_options
 
       @urls.delete_if { |url| !visit_link?(url) }
-      return if @urls.empty?
-
-      link_queue = Queue.new
-      page_queue = Queue.new
 
       @opts[:threads].times do
-        @tentacles << Thread.new { Tentacle.new(link_queue, page_queue, @opts).run }
+        @tentacles << Tentacle.new(new_queue(:link), new_queue(:page), @opts)
       end
 
-      @urls.each{ |url| link_queue.enq(url) }
+      if @opts[:init]
+        @urls.each{ |url| link_queue.enq(url) }
+        return @opts[:tag]
+      end
 
       loop do
         page = page_queue.deq
+        if page.nil?
+          if finished?
+            break
+          else
+            sleep(1)
+            # puts "nothing in page queue, sleeping"
+            next
+          end
+        end
+
         @pages.touch_key page.url
         puts "#{page.url} Queue: #{link_queue.size}" if @opts[:verbose]
         do_page_blocks page
@@ -176,20 +190,24 @@ module Anemone
         @pages[page.url] = page
 
         # if we are done with the crawl, tell the threads to end
-        if link_queue.empty? and page_queue.empty?
-          until link_queue.num_waiting == @tentacles.size
-            Thread.pass
-          end
-          if page_queue.empty?
-            @tentacles.size.times { link_queue << :END }
-            break
-          end
-        end
+        # if link_queue.empty? and page_queue.empty?
+        #   until link_queue.num_waiting == @tentacles.size
+        #     Thread.pass
+        #   end
+        #   if page_queue.empty?
+        #     @tentacles.size.times { link_queue << :END }
+        #     break
+        #   end
+        # end
       end
 
-      @tentacles.each { |thread| thread.join }
+      @tentacles.each { |tentacle| tentacle.die }
       do_after_crawl_blocks
       self
+    end
+
+    def queue(name, options = {})
+      @opts[:queue] = [name, options]
     end
 
     private
@@ -197,11 +215,30 @@ module Anemone
     def process_options
       @opts = DEFAULT_OPTS.merge @opts
       @opts[:threads] = 1 if @opts[:delay] > 0
+      @opts[:tag] ||= Digest::MD5.hexdigest(rand.to_s)[0,5]
       storage = Anemone::Storage::Base.new(@opts[:storage] || Anemone::Storage.Hash)
+      storage.clear if @opts[:init]
       @pages = PageStore.new(storage)
       @robots = Robots.new(@opts[:user_agent]) if @opts[:obey_robots_txt]
 
+      init_queue
       freeze_options
+    end
+
+    def init_queue
+      @link_queue = new_queue(:link)
+      @page_queue = new_queue(:page)
+
+      if @opts[:init]
+        @link_queue.clear
+        @page_queue.clear
+      end
+    end
+
+    def new_queue(which = nil)
+      driver, options = @opts[:queue]
+      raise "queue '%s' not supported at this time" % driver unless driver == :rabbit_mq
+      Queue::RabbitMQ.new("#{which}_queue-#{@opts[:tag]}", options)
     end
 
     #
@@ -212,6 +249,20 @@ module Anemone
       @opts.freeze
       @opts.each_key { |key| @opts[key].freeze }
       @opts[:cookies].each_key { |key| @opts[:cookies][key].freeze } rescue nil
+    end
+
+    def finished?
+      @finished_timer ||= Time.now
+      if @link_queue.empty? and @page_queue.empty?
+        if Time.now - @finished_timer > @opts[:finish_timeout]
+          true
+        else
+          false
+        end
+      else
+        @finished_timer = nil
+        false
+      end
     end
 
     #

@@ -15,6 +15,12 @@ module Anemone
         end
       end
 
+      def clear
+        @adap.clear
+      rescue
+        raise GenericError, "clearing storage failed"
+      end
+
       def [](key)
         @adap[key]
         rescue

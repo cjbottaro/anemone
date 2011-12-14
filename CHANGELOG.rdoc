@@ -1,3 +1,7 @@
+== 0.6.1.1 / 2011-12-08
+
+* Use distributed queues (RabbitMQ) for page_queue and link_queue.
+
 == 0.6.1 / 2011-02-24
 
 *Bug fixes
